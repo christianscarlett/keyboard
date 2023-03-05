@@ -13,6 +13,70 @@
 #define KEY_STATE_UNPRESSED true
 
 /*
+  ANALOG BUTTONS
+*/
+
+class AnalogButton {
+  
+  uint8_t buttonPin;
+  // Last value of analog button
+  int lastVal;
+  // "Current" value of analog button
+  int val;
+  // Hysteresis - Range in which "val" can be such that it doesn't count as changed
+  // e.g. val = 30, newVal = 32, and range = 5 means that val doesn't change
+  int range;
+  // Time the button state last changed - ms
+  uint32_t tLastChange;
+  // Debouncing - ms
+  const uint32_t tDelay = 5;
+
+  bool isFallingEdge;
+  bool isRisingEdge;
+
+  AnalogButton(uint8_t buttonPin_) {
+    buttonPin = buttonPin_;
+    millis();
+  }
+
+  void update() {
+    int newVal = analogRead(buttonPin);
+    bool isOutOfRange = newVal > val + range || newVal < val - range;
+    bool isDebounced = millis() - tLastChange > tDelay;
+    if (isOutOfRange && isDebounced) {
+      isFallingEdge = newVal < val;
+      isRisingEdge = newVal > val;
+      lastVal = val;
+      val = newVal;
+      tLastChange = millis();
+    } else {
+      isFallingEdge = false;
+      isRisingEdge = false;
+    }
+  }
+
+  int getLastVal() {
+    return lastVal;
+  }
+
+  int getVal() {
+    return val;
+  }
+
+  bool onFallingEdge() {
+    return isFallingEdge;
+  }
+
+  bool onRisingEdge() {
+    return isRisingEdge;
+  }
+};
+
+/*
+  END ANALOG BUTTONS
+*/
+
+/*
   PINS
 */
 
@@ -33,6 +97,9 @@ uint8_t outputPins[NUM_OUTPUT_PINS] = {
   9, 10, 11, 12, 20, 21, 22, 23
 };
 
+#define PITCH_WHEEL_PIN A10
+#define MOD_WHEEL_PIN A11
+#define OCTAVE_BUTTON_PIN A14
 
 /*
   END PINS
@@ -107,6 +174,12 @@ void setupOutputPins() {
   }
 }
 
+void setupControlPins() {
+  pinMode(A10, INPUT);
+  pinMode(A11, INPUT);
+  pinMode(A14, INPUT);
+}
+
 uint8_t getKey(uint8_t switchPin, uint8_t outputPin) {
   /**
     Get key number from the switch pin and output pin (0-60)
@@ -120,7 +193,7 @@ uint8_t getMidi(uint8_t key) {
 
 double VEL_C = 30.;
 double VEL_A = 127. - VEL_C;
-double MEDIUM_DT = 14.;
+double MEDIUM_DT = 16.;
 double MEDIUM_VEL = 85.;
 double VEL_B = -(1./MEDIUM_DT) * log((MEDIUM_VEL - VEL_C) / VEL_A);
 
@@ -138,11 +211,19 @@ uint8_t getVelocity(int start_time, int end_time) {
   } else if (vel < VEL_C) {
     return VEL_C;
   }
+  // Serial.println(dt);
+  // Serial.println(vel);
   return vel;
 }
 
 void busyWaitForPinTransition(int pin, int val) {
+  // uint32_t t = micros();
   while (digitalRead(pin) != val) {}
+  // Serial.println(micros() - t);
+}
+
+void updatePitchBend() {
+  
 }
 
 void setup() {
@@ -152,6 +233,7 @@ void setup() {
 
   setupSwitchPins();
   setupOutputPins();
+  setupControlPins();
   resetKeyState();
 
 }
@@ -159,14 +241,13 @@ void setup() {
 uint32_t tick = 0;
 
 void loop() {
-
   // scan
   for (int i = 0; i < NUM_OUTPUT_PINS; i++) {
     uint8_t outputPin = outputPins[i];
     // write to output pin
     digitalWrite(outputPin, HIGH);
-    // delay(1); // TODO: make lower?
     busyWaitForPinTransition(outputPin, HIGH);
+    delayMicroseconds(10);
     for (int j = 0; j < NUM_KEY_DOWN_PINS; j++) {
       uint8_t keyStartPin = keyStartPins[j];
       uint8_t keyDownPin = keyDownPins[j];
@@ -180,6 +261,8 @@ void loop() {
 
       // detect velocity pin changes
       if (keyStartVal == HIGH && lastKeyStartState[key] == KEY_STATE_UNPRESSED) {
+        // Serial.print("vel: ");
+        // Serial.println(key);
         // key begins to be pressed down
         keyStartTimes[key] = millis();
         lastKeyStartState[key] = KEY_STATE_PRESSED;
@@ -190,6 +273,8 @@ void loop() {
       
       // detect key down pin changes 
       if (keyDownVal == HIGH && lastKeyDownState[key] == KEY_STATE_UNPRESSED) {
+        // Serial.print("dwn: ");
+        // Serial.println(key);
         // key fully pressed
         usbMIDI.sendNoteOn(getMidi(key), getVelocity(keyStartTimes[key], millis()), CHANNEL);
         lastKeyDownState[key] = KEY_STATE_PRESSED;
