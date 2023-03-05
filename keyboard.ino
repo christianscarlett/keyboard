@@ -1,6 +1,7 @@
 #include <Bounce.h>
 
 #define CHANNEL 1
+#define MOD_WHEEL_CC 1
 
 #define NUM_KEY_DOWN_PINS 8
 #define NUM_OUTPUT_PINS 8
@@ -97,8 +98,8 @@ uint8_t outputPins[NUM_OUTPUT_PINS] = {
   9, 10, 11, 12, 20, 21, 22, 23
 };
 
-#define PITCH_WHEEL_PIN A10
-#define MOD_WHEEL_PIN A11
+#define MOD_WHEEL_PIN A10
+#define PITCH_WHEEL_PIN A11
 #define OCTAVE_BUTTON_PIN A14
 
 /*
@@ -118,6 +119,12 @@ int keyStartTimes[NUM_KEYS];
 
 // Number of octaves to shift the MIDI translation
 int octaveOffset = 1;
+
+// Distance pitch wheel is bent [-512, 511]
+int pitchWheelDelta = 0;
+
+// Distance mod wheel is bent [0, 127]
+int modWheelDelta = 0;
 
 /*
   END STATE
@@ -222,8 +229,28 @@ void busyWaitForPinTransition(int pin, int val) {
   // Serial.println(micros() - t);
 }
 
+int pitchWheelDeadZone = 10;
+int pitchWheelHysteresis = 2;
+
 void updatePitchBend() {
-  
+  // [0, 1023] -> [-512, 511]
+  int delta = analogRead(PITCH_WHEEL_PIN) - 512;
+  if (abs(delta) > pitchWheelDeadZone && abs(pitchWheelDelta - delta) > pitchWheelHysteresis) {
+    usbMIDI.sendPitchBend(-8*delta, CHANNEL);
+    pitchWheelDelta = delta;
+  } else if (abs(delta) <= pitchWheelDeadZone && abs(pitchWheelDelta) > pitchWheelDeadZone) {
+    usbMIDI.sendPitchBend(0, CHANNEL);
+    pitchWheelDelta = 0;
+  }
+}
+
+void updateModulation() {
+  // [0, 1023] -> [0, 127]
+  int delta = analogRead(MOD_WHEEL_PIN) / 8;
+  if (delta != modWheelDelta) {
+    usbMIDI.sendControlChange(MOD_WHEEL_CC, 127-delta, CHANNEL);
+    modWheelDelta = delta;
+  }
 }
 
 void setup() {
@@ -238,9 +265,10 @@ void setup() {
 
 }
 
-uint32_t tick = 0;
-
 void loop() {
+  updatePitchBend();
+  updateModulation();
+
   // scan
   for (int i = 0; i < NUM_OUTPUT_PINS; i++) {
     uint8_t outputPin = outputPins[i];
