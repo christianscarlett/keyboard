@@ -21,39 +21,58 @@ class AnalogButton {
   
   uint8_t buttonPin;
   // Last value of analog button
-  int lastVal;
+  int lastVal = 1023;
   // "Current" value of analog button
-  int val;
+  int val = lastVal;
   // Hysteresis - Range in which "val" can be such that it doesn't count as changed
   // e.g. val = 30, newVal = 32, and range = 5 means that val doesn't change
-  int range;
-  // Time the button state last changed - ms
-  uint32_t tLastChange;
+  int range = 100;
   // Debouncing - ms
-  const uint32_t tDelay = 5;
+  const uint32_t tDelay = 10;
 
   bool isFallingEdge;
   bool isRisingEdge;
 
+  uint32_t tStartDebounce = millis();
+  bool wasDebouncing = false;
+
+  public:
   AnalogButton(uint8_t buttonPin_) {
     buttonPin = buttonPin_;
-    millis();
   }
 
   void update() {
+    isFallingEdge = false;
+    isRisingEdge = false;
     int newVal = analogRead(buttonPin);
-    bool isOutOfRange = newVal > val + range || newVal < val - range;
-    bool isDebounced = millis() - tLastChange > tDelay;
-    if (isOutOfRange && isDebounced) {
-      isFallingEdge = newVal < val;
-      isRisingEdge = newVal > val;
-      lastVal = val;
-      val = newVal;
-      tLastChange = millis();
-    } else {
-      isFallingEdge = false;
-      isRisingEdge = false;
+    bool shouldDebounce = (abs(newVal - val) > range) && !wasDebouncing;
+    if (shouldDebounce) {
+      // Begin debounce
+      tStartDebounce = millis();
     }
+
+    bool isInDebouncePeriod = millis() - tStartDebounce  < tDelay;
+    // Do nothing if debouncing
+    if (isInDebouncePeriod) {
+      wasDebouncing = true;
+      return;
+    }
+    // We must have settled
+    if (wasDebouncing) {
+      wasDebouncing = false;
+      // Check that the value changed
+      if (abs(val - newVal) > range) {
+        triggerChange(newVal);
+      }
+    }
+  }
+
+  /** At this point, we must have settled with newVal */
+  void triggerChange(int newVal) {
+    lastVal = val;
+    val = newVal;
+    isFallingEdge = val < lastVal;
+    isRisingEdge = val > lastVal;
   }
 
   int getLastVal() {
@@ -70,6 +89,10 @@ class AnalogButton {
 
   bool onRisingEdge() {
     return isRisingEdge;
+  }
+
+  bool onResting() {
+    return !isRisingEdge && !isFallingEdge;
   }
 };
 
@@ -100,7 +123,7 @@ uint8_t outputPins[NUM_OUTPUT_PINS] = {
 
 #define MOD_WHEEL_PIN A10
 #define PITCH_WHEEL_PIN A11
-#define OCTAVE_BUTTON_PIN A14
+#define ANALOG_BUTTON_PIN A14
 
 /*
   END PINS
@@ -125,6 +148,8 @@ int pitchWheelDelta = 0;
 
 // Distance mod wheel is bent [0, 127]
 int modWheelDelta = 0;
+
+AnalogButton analogButton(ANALOG_BUTTON_PIN);
 
 /*
   END STATE
@@ -253,6 +278,33 @@ void updateModulation() {
   }
 }
 
+void updateAnalogButton() {
+  analogButton.update();
+  if (analogButton.onFallingEdge()) {
+    Serial.println("HAHA");
+    Serial.println(analogButton.getVal());
+  }
+  if (analogButton.onRisingEdge()) {
+    Serial.println("ASDF");
+    Serial.println(analogButton.getVal());
+    if (analogButton.getVal() == 1023) {
+
+    }
+  }
+}
+
+#define NONE_PRESSED 1023
+#define OCTAVE_DOWN 520
+#define OCTAVE_UP 680
+#define BOTH 410
+
+#define ANALOG_BUTTON_RANGE 50
+
+bool getAnalogButtonState(int val) {
+  if ()
+}
+
+
 void setup() {
 
   emptyKeyMap();
@@ -266,8 +318,11 @@ void setup() {
 }
 
 void loop() {
+
   updatePitchBend();
   updateModulation();
+  updateAnalogButton();
+
 
   // scan
   for (int i = 0; i < NUM_OUTPUT_PINS; i++) {
