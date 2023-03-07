@@ -13,6 +13,12 @@
 #define KEY_STATE_PRESSED false
 #define KEY_STATE_UNPRESSED true
 
+#define ANALOG_BUTTON_RANGE 100
+#define NONE_PRESSED 1023
+#define OCTAVE_DOWN 520
+#define OCTAVE_UP 680
+#define BOTH 410
+
 /*
   ANALOG BUTTONS
 */
@@ -26,7 +32,7 @@ class AnalogButton {
   int val = lastVal;
   // Hysteresis - Range in which "val" can be such that it doesn't count as changed
   // e.g. val = 30, newVal = 32, and range = 5 means that val doesn't change
-  int range = 100;
+  int range = ANALOG_BUTTON_RANGE;
   // Debouncing - ms
   const uint32_t tDelay = 10;
 
@@ -137,6 +143,9 @@ uint8_t outputPins[NUM_OUTPUT_PINS] = {
 bool lastKeyDownState[NUM_KEYS];
 bool lastKeyStartState[NUM_KEYS];
 
+// Keeps track of the last MIDI note played by a key
+uint8_t lastMidiForKey[NUM_KEYS];
+
 // Last time the start switch for a key transitioned from UP -> DOWN
 int keyStartTimes[NUM_KEYS];
 
@@ -162,6 +171,7 @@ void resetKeyState() {
   for (int i = 0; i < NUM_KEYS; i++) {
     lastKeyDownState[i] = KEY_STATE_UNPRESSED;
     lastKeyStartState[i] = KEY_STATE_UNPRESSED;
+    lastMidiForKey[i] = 0;
     keyStartTimes[i] = 0;
   }
 }
@@ -243,15 +253,12 @@ uint8_t getVelocity(int start_time, int end_time) {
   } else if (vel < VEL_C) {
     return VEL_C;
   }
-  // Serial.println(dt);
-  // Serial.println(vel);
   return vel;
 }
 
 void busyWaitForPinTransition(int pin, int val) {
   // uint32_t t = micros();
   while (digitalRead(pin) != val) {}
-  // Serial.println(micros() - t);
 }
 
 int pitchWheelDeadZone = 10;
@@ -278,32 +285,22 @@ void updateModulation() {
   }
 }
 
+
 void updateAnalogButton() {
   analogButton.update();
-  if (analogButton.onFallingEdge()) {
-    Serial.println("HAHA");
-    Serial.println(analogButton.getVal());
-  }
   if (analogButton.onRisingEdge()) {
-    Serial.println("ASDF");
-    Serial.println(analogButton.getVal());
-    if (analogButton.getVal() == 1023) {
-
+    if (isInRange(analogButton.getLastVal(), OCTAVE_UP)) {
+      octaveOffset += 1;
+    }
+    if (isInRange(analogButton.getLastVal(), OCTAVE_DOWN)) {
+      octaveOffset -= 1;
     }
   }
 }
 
-#define NONE_PRESSED 1023
-#define OCTAVE_DOWN 520
-#define OCTAVE_UP 680
-#define BOTH 410
-
-#define ANALOG_BUTTON_RANGE 50
-
-bool getAnalogButtonState(int val) {
-  if ()
+bool isInRange(int val, int targetVal) {
+  return abs(val - targetVal) < ANALOG_BUTTON_RANGE;
 }
-
 
 void setup() {
 
@@ -318,11 +315,10 @@ void setup() {
 }
 
 void loop() {
-
+  // uint32_t t = micros();
   updatePitchBend();
   updateModulation();
   updateAnalogButton();
-
 
   // scan
   for (int i = 0; i < NUM_OUTPUT_PINS; i++) {
@@ -330,7 +326,7 @@ void loop() {
     // write to output pin
     digitalWrite(outputPin, HIGH);
     busyWaitForPinTransition(outputPin, HIGH);
-    delayMicroseconds(10);
+    delayMicroseconds(15);
     for (int j = 0; j < NUM_KEY_DOWN_PINS; j++) {
       uint8_t keyStartPin = keyStartPins[j];
       uint8_t keyDownPin = keyDownPins[j];
@@ -344,8 +340,6 @@ void loop() {
 
       // detect velocity pin changes
       if (keyStartVal == HIGH && lastKeyStartState[key] == KEY_STATE_UNPRESSED) {
-        // Serial.print("vel: ");
-        // Serial.println(key);
         // key begins to be pressed down
         keyStartTimes[key] = millis();
         lastKeyStartState[key] = KEY_STATE_PRESSED;
@@ -356,19 +350,20 @@ void loop() {
       
       // detect key down pin changes 
       if (keyDownVal == HIGH && lastKeyDownState[key] == KEY_STATE_UNPRESSED) {
-        // Serial.print("dwn: ");
-        // Serial.println(key);
         // key fully pressed
-        usbMIDI.sendNoteOn(getMidi(key), getVelocity(keyStartTimes[key], millis()), CHANNEL);
+        uint8_t midiNote = getMidi(key);
+        usbMIDI.sendNoteOn(midiNote, getVelocity(keyStartTimes[key], millis()), CHANNEL);
         lastKeyDownState[key] = KEY_STATE_PRESSED;
+        lastMidiForKey[key] = midiNote;
       } else if (keyDownVal == LOW && lastKeyDownState[key] == KEY_STATE_PRESSED) {
         // key begins to be lifted
-        usbMIDI.sendNoteOff(getMidi(key), 0, CHANNEL);
+        usbMIDI.sendNoteOff(lastMidiForKey[key], 0, CHANNEL);
         lastKeyDownState[key] = KEY_STATE_UNPRESSED;
+        lastMidiForKey[key] = 0;
       }
     }
     digitalWrite(outputPin, LOW);
   }
-
+  // Serial.println(micros() - t);
 }
 
